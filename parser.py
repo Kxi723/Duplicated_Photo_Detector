@@ -9,11 +9,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
 from PIL.ExifTags import TAGS, GPSTAGS
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-PHASH_THRESHOLD = 5
+PHASH_THRESHOLD = 9
 
 
 SCRIPT_DIR = Path(__file__).parent
 IMAGE_DIR = SCRIPT_DIR / "image"
+INFO_DIR = SCRIPT_DIR / "result.json"
 
 logging.basicConfig(
     filename = SCRIPT_DIR  / "activity.log",
@@ -135,14 +136,12 @@ class DuplicateResult:
     Simple container so callers can check status without parsing strings.
     """
 
-    def __init__(self, is_duplicate: bool, reason: str, original_filename: str = None):
+    def __init__(self, is_duplicate: bool, reason: str, 
+                file_name: str = None, file_path: Path = None):
         self.is_duplicate = is_duplicate
         self.reason = reason
-        self.original_filename = original_filename
-
-    def __str__(self) -> str:
-        prefix = "DUPLICATE" if self.is_duplicate else "UNIQUE"
-        return f"{prefix} — {self.reason}"
+        self.file_name = file_name
+        self.file_path = file_path
 
 
 class PhotoScanner:
@@ -175,7 +174,8 @@ class PhotoScanner:
     # Implement perception hashing to get 16-bits hexa value
     def compute_phash(self, path: Path) -> imagehash.ImageHash | None:
         try:
-            return imagehash.phash(Image.open(path))
+            image = ImageOps.exif_transpose(Image.open(path))
+            return imagehash.phash(image)
 
         except Exception as e:
             logging.error(f"{path}: {e}")
@@ -229,7 +229,7 @@ class PhotoScanner:
 
         return metadata
 
-
+    # Store all image data read
     def build_record(self, path: Path) -> dict:
         return {
             "filename": path.name,
@@ -251,6 +251,7 @@ class PhotoScanner:
                 return DuplicateResult(
                     True,
                     f"Exact copy of '{historical_data['filename']}' (MD5)", 
+                    historical_data["filename"],
                     historical_data["filepath"]
                 )
 
@@ -267,6 +268,7 @@ class PhotoScanner:
                     return DuplicateResult(
                         True,
                         f"visually similar to '{historical_data['filename']}' (pHash distance={distance})",
+                        historical_data["filename"],
                         historical_data["filepath"]
                     )
 
@@ -285,7 +287,7 @@ class PhotoScanner:
 
         for historical_data in self.database:
             historical_meta = historical_data["metadata"]
-            
+
             # Collect available dates from historical image
             hist_dates_set = {
                 historical_meta.get("date_time"), 
@@ -293,16 +295,17 @@ class PhotoScanner:
                 historical_meta.get("date_digitized")
             }
             hist_dates_set.discard(None)
-            
+
             # 2) Check if ANY timestamp and phone model matches
             if new_dates_set and hist_dates_set and new_dates_set.intersection(hist_dates_set):
-                
+  
                 if new_meta["model"] and new_meta["model"] == historical_meta.get("model"):
                     logging.info(f"{image_file} is identified as duplicate due to same metadata")
 
                     return DuplicateResult(
                         True,
                         f"same timestamp & device as '{historical_data['filename']}'",
+                        historical_data["filename"],
                         historical_data["filepath"]
                     )
 
@@ -312,38 +315,38 @@ class PhotoScanner:
 
 
     def start(self) -> None:
+        # Read all images in folder
         image_list = self.read_image_path()
         logging.info(f"{len(image_list)} images found")
 
-        print("─" * 40)
         displayer = ImageDisplayer()
 
+        # Start matching to find duplicate image
         for number, image in enumerate(image_list, start = 1):
             data = self.build_record(image)
             result = self.check_duplicate(data)
 
+            # Display and export the result
             if result.is_duplicate:
+                print(f"{number}) ❌ {image.name} -> {result.file_name}")
+                title = f"Duplicate images found: {image.name}  <-->  {result.file_name}"
                 
-                print(f"{number}) ❌ {image.name} -> {result.original_filename}")
-                data["duplicate_of"] = result.original_filename
+                window = displayer.display_image(image, Path(result.file_path))
+                displayer.keep_display(window, title)
+
                 data["duplicate_reason"] = result.reason
                 self.duplicates.append(data)
-                
-                combined_img = displayer.display_image(image, Path(result.original_filename))
-
-                title = f"Duplicate images found: {image.name}  <-->  {Path(result.original_filename).name}"
-                displayer.keep_display(combined_img, title)
 
             else:
                 print(f"{number}) ✅ {image.name}")
                 self.database.append(data)
 
         print("─" * 40)
-        print(f"Duplicates found: {len(self.duplicates)}")
-        print(f"Unique photos: {len(self.database)}")
+        print(f"Duplicates found: {len(self.duplicates)} images")
+        print(f"Unique photos: {len(self.database)} images")
 
 
-    def export_report(self, output_json: Path = SCRIPT_DIR / "report.json") -> None:
+    def export_report(self, output_json: Path = INFO_DIR) -> None:
         export_data = {
             "unique_photos": self.database,
             "duplicates": self.duplicates
@@ -352,7 +355,8 @@ class PhotoScanner:
         with open(output_json, "w", encoding="utf-8") as f:
             json.dump(export_data, f, indent=4, cls=ReportEncoder)
         
-        print(f"Detailed JSON report exported to {output_json}")
+        print(f"Detailed JSON report exported to '{output_json.name}'")
+        logging.info(f"Detail Results have been exported to {output_json.name}")
 
 
 if __name__ == "__main__":
