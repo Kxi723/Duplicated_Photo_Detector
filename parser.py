@@ -3,7 +3,8 @@ import logging
 import hashlib
 import imagehash
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageOps 
+import tkinter as tk
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
 from PIL.ExifTags import TAGS, GPSTAGS
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -22,81 +23,99 @@ logging.basicConfig(
 
 
 class ImageDisplayer:
-    def __init__(self, max_height=600, padding=20, label_h=36, bg_color=(30, 30, 30), label_color=(200, 200, 200)):
-        self.max_height = max_height
+    """
+    Simple container for displaying duplicate image for user to see
+    """
+
+    def __init__(self, background_colour = (240, 240, 240), padding = 5,
+                max_height = 500, label_h = 20,label_colour = (0, 0, 0)):
+
+        self.background_colour = background_colour
         self.padding = padding
+        self.max_height = max_height
         self.label_h = label_h
-        self.bg_color = bg_color
-        self.label_color = label_color
+        self.label_colour = label_colour
 
-    def resize_to_height(self, img: Image.Image, target_h: int) -> Image.Image:
-        """Scale image to target height, maintaining aspect ratio."""
-        scale = target_h / img.height
-        return img.resize((int(img.width * scale), target_h), Image.LANCZOS)
+    # Scale image with fix height, maintain ratio
+    def scale_image(self, image: Image.Image, max_height: int) -> Image.Image:
+        scale = max_height / image.height
 
-    def compare(self, path1: Path, path2: Path) -> Image.Image:
+        # Lanczos filter ensure image up/downscaling quality
+        # int() convert float value
+        return image.resize(
+            (int(image.width * scale), max_height), 
+            Image.LANCZOS
+        )
+
+    # Disply duplicated images found
+    def display_image(self, image1: Path, image2: Path) -> Image.Image:
         """
-        Place two images side by side on a dark canvas.
-        Returns the combined Image.
+        Rotates & scales images, place them side by side on black canva,
+        display corresponding image name.
         """
-        # Automatically rotate image based on its EXIF orientation if needed
-        img1_raw = ImageOps.exif_transpose(Image.open(path1))
-        img2_raw = ImageOps.exif_transpose(Image.open(path2))
 
-        img1 = self.resize_to_height(img1_raw.convert("RGB"), self.max_height)
-        img2 = self.resize_to_height(img2_raw.convert("RGB"), self.max_height)
-    
-        total_w = img1.width + self.padding + img2.width
+        # Rotate image based on its EXIF orientation
+        img1_horizontal = ImageOps.exif_transpose(Image.open(image1))
+        img2_horizontal = ImageOps.exif_transpose(Image.open(image2))
+
+        img1_scaled = self.scale_image(img1_horizontal.convert("RGB"), self.max_height)
+        img2_scaled = self.scale_image(img2_horizontal.convert("RGB"), self.max_height)
+
+        total_w = img1_scaled.width + img2_scaled.width + self.padding
         total_h = self.label_h + self.max_height
-    
-        canvas = Image.new("RGB", (total_w, total_h), self.bg_color)
-    
-        # Paste images below the label row
-        canvas.paste(img1, (0, self.label_h))
-        canvas.paste(img2, (img1.width + self.padding, self.label_h))
-    
-        # Draw filename labels
-        draw = ImageDraw.Draw(canvas)
-        try:
-            font = ImageFont.truetype("arial.ttf", 14)
-        except OSError:
-            font = ImageFont.load_default()
-    
-        draw.text((4, 8), Path(path1).name, fill=self.label_color, font=font)
-        draw.text((img1.width + self.padding + 4, 8), Path(path2).name, fill=self.label_color, font=font)
-    
-        return canvas
 
-    def show_and_wait(self, img: Image.Image, title: str = "Duplicate Comparison"):
-        """Displays image using Tkinter and blocks execution until the user closes it."""
-        import tkinter as tk
-        from PIL import ImageTk
-        
+        canva = Image.new("RGB", (total_w, total_h), self.background_colour)
+
+        # Paste new images below the label row
+        # Box argument (second parameter): (left, upper, right, and lower pixel coordinate)
+        canva.paste(img1_scaled, (0, self.label_h))
+        canva.paste(img2_scaled, (img1_scaled.width + self.padding, self.label_h))
+
+        # Display file name
+        ImageDraw.Draw(canva).text(
+            (20, 1), 
+            Path(image1).name, 
+            fill = self.label_colour, 
+            font = ImageFont.truetype("arial.ttf", 14)
+        )
+        ImageDraw.Draw(canva).text((
+            img1_scaled.width + self.padding + 20, 1),
+            Path(image2).name,
+            fill = self.label_colour,
+            font = ImageFont.truetype("arial.ttf", 14)
+        )
+
+        return canva
+
+    # Hold the window
+    def keep_display(self, image: Image.Image,
+                    title: str = "Duplicate images found") -> None:
+        """
+        Displays image using Tkinter in the center, blocks execution 
+        until the user closes it. Display one by one.
+        """
+
+        # Create main window
         root = tk.Tk()
         root.title(title)
         root.resizable(False, False)
-        
-        # Bring window to the front
-        root.lift()
-        root.attributes('-topmost', True)
-        root.after_idle(root.attributes, '-topmost', False)
-        
-        photo_img = ImageTk.PhotoImage(img)
-        label = tk.Label(root, image=photo_img)
+
+        # Load & read the image
+        img = ImageTk.PhotoImage(image)
+        label = tk.Label(root, image = img)
         label.pack()
-        
+
         # Center the window
         root.update_idletasks()
-        w = root.winfo_reqwidth()
-        h = root.winfo_reqheight()
-        ws = root.winfo_screenwidth()
-        hs = root.winfo_screenheight()
-        x = int(ws/2 - w/2)
-        y = int(hs/2 - h/2)
-        root.geometry(f'{w}x{h}+{x}+{y}')
-        
-        # Block until closed
+        window_w = root.winfo_reqwidth()
+        window_h = root.winfo_reqheight()        
+        x_coord = int(root.winfo_screenwidth()/2 - window_w/2)
+        y_coord = int(root.winfo_screenheight()/2 - window_h/2)
+        root.geometry(f'{window_w}x{window_h}+{x_coord}+{y_coord}')
+
+        # Keep the window open
         root.mainloop()
+
 
 class ReportEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -298,16 +317,16 @@ class PhotoScanner:
             result = self.check_duplicate(data)
 
             if result.is_duplicate:
-                combined_img = displayer.compare(image, Path(result.original_filename))
                 
                 print(f"{number}) ❌ {image.name} -> {result.original_filename}")
                 data["duplicate_of"] = result.original_filename
                 data["duplicate_reason"] = result.reason
                 self.duplicates.append(data)
                 
-                # Show the image window and block until the user closes it
-                title = f"Duplicate: {image.name} <-> {Path(result.original_filename).name}"
-                displayer.show_and_wait(combined_img, title)
+                combined_img = displayer.display_image(image, Path(result.original_filename))
+
+                title = f"Duplicate images found: {image.name}  <-->  {Path(result.original_filename).name}"
+                displayer.keep_display(combined_img, title)
 
             else:
                 print(f"{number}) ✅ {image.name}")
