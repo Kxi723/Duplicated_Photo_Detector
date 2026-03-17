@@ -2,6 +2,7 @@ import json
 import logging
 import hashlib
 import imagehash
+import time
 from pathlib import Path
 import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
@@ -99,6 +100,8 @@ class ImageDisplayer:
         root = tk.Tk()
         root.title(title)
         root.resizable(False, False)
+        # Display at top
+        root.attributes(topmost=True)
 
         # Load & read the image
         img = ImageTk.PhotoImage(image)
@@ -114,7 +117,10 @@ class ImageDisplayer:
         root.geometry(f'{window_w}x{window_h}+{x_coord}+{y_coord}')
 
         # Keep the window open
+        logging.info("Window displayed")
         root.mainloop()
+
+        logging.info("Window closed")        
 
 
 class ReportEncoder(json.JSONEncoder):
