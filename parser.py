@@ -416,9 +416,11 @@ if __name__ == "__main__":
 
     except FileNotFoundError as e:
         logging.error(e)
+        print(e)
 
     except Exception as e:
         logging.error(e)
+        print(e)
 
     finally:
         logging.info("Program ended")
